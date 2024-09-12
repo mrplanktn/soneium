@@ -1,74 +1,53 @@
 const Web3 = require('web3');
-const { ethers } = require('ethers');
+require('dotenv').config(); // Load environment variables from .env
+const fs = require('fs');
 
-// Konfigurasi Ethereum
-const ethereumRpcUrl = 'https://mainnet.infura.io/v3/YOUR_INFURA_PROJECT_ID';
-const ethereumPrivateKey = 'YOUR_ETHEREUM_PRIVATE_KEY';
-const ethereumTokenAddress = 'ERC20_TOKEN_CONTRACT_ADDRESS_ON_ETHEREUM';
+// Retrieve environment variables
+const soneiumProviderURL = process.env.SONEIUM_PROVIDER;
+const privateKey = process.env.PRIVATE_KEY;
+const fromAddress = process.env.FROM_ADDRESS;
+const transferAmount = process.env.TRANSFER_AMOUNT;
 
-// Konfigurasi Soneium Testnet
-const soneiumRpcUrl = 'https://rpc.minato.soneium.org';
-const soneiumPrivateKey = 'YOUR_SONEIUM_PRIVATE_KEY';
-const soneiumTokenAddress = 'ERC20_TOKEN_CONTRACT_ADDRESS_ON_SONEIUM';
+// Read the list of addresses from JSON file
+let recipients;
+try {
+    recipients = JSON.parse(fs.readFileSync('recipients.json', 'utf8'));
+} catch (error) {
+    console.error('Error reading recipients file:', error);
+    process.exit(1);
+}
 
-// Inisialisasi Web3 dan Ethers
-const web3 = new Web3(new Web3.providers.HttpProvider(ethereumRpcUrl));
-const ethereumProvider = new ethers.JsonRpcProvider(ethereumRpcUrl);
-const soneiumProvider = new ethers.JsonRpcProvider(soneiumRpcUrl);
+// Initialize Web3 with provider URL
+const soneiumWeb3 = new Web3(new Web3.providers.HttpProvider(soneiumProviderURL));
 
-// Token ABI (ERC20)
-const tokenAbi = [
-    "function transfer(address to, uint amount) public returns (bool)",
-    "function balanceOf(address account) public view returns (uint)"
-];
-
-// Konfigurasi kontrak token
-const ethereumTokenContract = new web3.eth.Contract(tokenAbi, ethereumTokenAddress);
-const soneiumTokenContract = new ethers.Contract(soneiumTokenAddress, tokenAbi, soneiumProvider);
-
-// Fungsi untuk memindahkan token dari Ethereum ke Soneium
-async function bridgeTokens(amount, recipient) {
+async function transferFunds() {
     try {
-        // Setup Ethereum
-        const ethereumAccount = web3.eth.accounts.privateKeyToAccount(ethereumPrivateKey);
-        web3.eth.accounts.wallet.add(ethereumAccount);
-        web3.eth.defaultAccount = ethereumAccount.address;
+        // Check sender account balance
+        const balance = await soneiumWeb3.eth.getBalance(fromAddress);
+        console.log(`Balance of account ${fromAddress}: ${soneiumWeb3.utils.fromWei(balance, 'ether')} ETH`);
 
-        const ethereumBalance = await ethereumTokenContract.methods.balanceOf(ethereumAccount.address).call();
-        console.log(`Ethereum balance: ${web3.utils.fromWei(ethereumBalance, 'ether')} ETH`);
+        // Iterate over recipients and send transactions
+        for (let address of recipients) {
+            // Prepare transaction details
+            const tx = {
+                from: fromAddress,
+                to: address,
+                value: soneiumWeb3.utils.toWei(transferAmount, 'ether'),
+                gas: 21000, // Standard gas limit for ETH transfers
+                gasPrice: await soneiumWeb3.eth.getGasPrice(),
+                nonce: await soneiumWeb3.eth.getTransactionCount(fromAddress)
+            };
 
-        if (parseFloat(web3.utils.fromWei(ethereumBalance, 'ether')) < amount) {
-            console.log('Insufficient balance on Ethereum.');
-            return;
+            // Sign the transaction
+            const signedTx = await soneiumWeb3.eth.accounts.signTransaction(tx, privateKey);
+
+            // Send the signed transaction
+            const receipt = await soneiumWeb3.eth.sendSignedTransaction(signedTx.rawTransaction);
+            console.log(`Transaction successful: ${receipt.transactionHash} to ${address}`);
         }
-
-        // Kirim token ke Soneium Testnet
-        const tx = await ethereumTokenContract.methods.transfer(recipient, web3.utils.toWei(amount.toString(), 'ether')).send({
-            from: ethereumAccount.address,
-            gas: 2000000
-        });
-
-        console.log('Transaction successful:', tx.transactionHash);
-
-        // Setup Soneium
-        const soneiumWallet = new ethers.Wallet(soneiumPrivateKey, soneiumProvider);
-
-        // Cek saldo di Soneium
-        const soneiumBalance = await soneiumTokenContract.balanceOf(soneiumWallet.address);
-        console.log(`Soneium balance: ${ethers.utils.formatEther(soneiumBalance)} ETH`);
-
-        // Kirim token ke alamat yang dituju
-        const soneiumTokenWithSigner = soneiumTokenContract.connect(soneiumWallet);
-        const txReceipt = await soneiumTokenWithSigner.transfer(recipient, ethers.utils.parseEther(amount.toString()));
-        console.log('Soneium transaction successful:', txReceipt.hash);
-
     } catch (error) {
-        console.error('Error bridging tokens:', error);
+        console.error('Failed to transfer:', error);
     }
 }
 
-// Contoh penggunaan
-const amountToBridge = 1; // Jumlah token yang ingin dikirim
-const recipientAddress = 'RECIPIENT_ADDRESS'; // Alamat penerima di Soneium Testnet
-
-bridgeTokens(amountToBridge, recipientAddress);
+transferFunds();
