@@ -24,11 +24,11 @@ async function sendEther() {
         const amountToSend = ethers.parseEther("0.0001"); // Ubah sesuai kebutuhan
 
         // Pastikan saldo cukup
-        const totalAmount = amountToSend * addresses.length;
-        if (balance < totalAmount) {
-            console.error("Insufficient funds!");
-            return;
-        }
+        const totalAmount = amountToSend * BigInt(addresses.length); // Pastikan addresses.length diubah ke BigInt
+if (balance < totalAmount) {
+    console.error("Insufficient funds!");
+    return;
+}
 
         // Kirim Ether ke setiap alamat
         for (const address of addresses) {
